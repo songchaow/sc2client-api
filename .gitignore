@@ -20,6 +20,7 @@
 *.app
 
 build/
+build-linux/
 build_*/
 
 *.swp
