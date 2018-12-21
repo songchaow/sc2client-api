@@ -16,6 +16,33 @@
 #include <cassert>
 #include <thread>
 
+#ifdef __linux__
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h> 
+#endif
+
+#ifdef WIN32
+#define WIN32_LEAN_AND_MEAN
+
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+
+// Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
+#pragma comment (lib, "Ws2_32.lib")
+#pragma comment (lib, "Mswsock.lib")
+#pragma comment (lib, "AdvApi32.lib")
+#endif
+
 namespace sc2 {
 
 void RunParallel(const std::function<void(Agent* a)>& step, std::vector<Agent*>& agents) {
@@ -30,6 +57,163 @@ void RunParallel(const std::function<void(Agent* a)>& step, std::vector<Agent*>&
         t.join();
     }
 }
+
+struct LaunchParams
+{
+    char validation[18] = "SC2LaunchProtocol";
+    LaunchParams() = default;
+    LaunchParams(ProcessSettings& process_settings, Client* client, int window_width, int window_height, int window_start_x, int window_start_y, int port, int client_num) :
+    process_settings(process_settings),
+    client(client),
+    window_width(window_width),
+    window_height(window_height),
+    window_start_x(window_start_x),
+    window_start_y(window_start_y)
+    { }
+    ProcessSettings process_settings;
+    Client* client;
+    int window_width;
+    int window_height;
+    int window_start_x;
+    int window_start_y;
+    int port;
+    int client_num=0;
+};
+#ifdef WIN32
+int LaunchProcessFromRemote(int port)
+{
+    WSADATA wsaData;
+    int iResult;
+
+    SOCKET ListenSocket = INVALID_SOCKET;
+    SOCKET ClientSocket = INVALID_SOCKET;
+
+    struct addrinfo *result = NULL;
+    struct addrinfo hints;
+
+    int iSendResult;
+    LaunchParams recvbuf;
+    iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
+    if (iResult != 0) {
+        printf("WSAStartup failed with error: %d\n", iResult);
+        return 1;
+    }
+    ZeroMemory( &hints, sizeof(hints) );
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = AI_PASSIVE;
+
+    iResult = getaddrinfo(NULL, std::to_string(port).c_str(), &hints, &result);
+    if ( iResult != 0 ) {
+        printf("getaddrinfo failed with error: %d\n", iResult);
+        WSACleanup();
+        return 1;
+    }
+
+    // Create a SOCKET for connecting to server
+    ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    if (ListenSocket == INVALID_SOCKET) {
+        printf("socket failed with error: %ld\n", WSAGetLastError());
+        freeaddrinfo(result);
+        WSACleanup();
+        return 1;
+    }
+    // Setup the TCP listening socket
+    printf("Binding addr to: ");
+    for (int i = 0; i < 4; i++) printf("%d ", result->ai_addr->sa_data[i]);
+    std::cout << std::endl;
+    iResult = bind( ListenSocket, result->ai_addr, (int)result->ai_addrlen);
+    if (iResult == SOCKET_ERROR) {
+        printf("bind failed with error: %d\n", WSAGetLastError());
+        freeaddrinfo(result);
+        closesocket(ListenSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    freeaddrinfo(result);
+    iResult = listen(ListenSocket, SOMAXCONN);
+    if (iResult == SOCKET_ERROR) {
+        printf("listen failed with error: %d\n", WSAGetLastError());
+        closesocket(ListenSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    while(1)
+    {
+        // keep accepting
+        ClientSocket = accept(ListenSocket, NULL, NULL);
+        if (ClientSocket == INVALID_SOCKET) {
+            printf("accept failed with error: %d\n", WSAGetLastError());
+            closesocket(ListenSocket);
+            WSACleanup();
+            return 1;
+        }
+        iResult = recv(ClientSocket, (char*)&recvbuf, sizeof(LaunchParams), 0);
+        // validate
+        if ()
+        {
+            iResult = shutdown(ClientSocket, SD_SEND);
+            if (iResult == SOCKET_ERROR) {
+                printf("shutdown failed: %d\n", WSAGetLastError());
+                closesocket(ClientSocket);
+                WSACleanup();
+                return 1;
+            }
+            continue;
+        }
+        // Launch sc2
+
+    }
+}
+#endif
+
+
+#ifdef __linux__
+int LaunchRemoteProcess(ProcessSettings& process_settings, Client* client, int window_width, int window_height, int window_start_x, int window_start_y, int port, int client_num=0)
+{
+    assert(client);
+    process_settings.process_info.push_back(sc2::ProcessInfo());
+    ProcessInfo& pi = process_settings.process_info.back();
+
+    // Get the next port
+    pi.port = port;
+    // Client-Side Codes
+    // Linux only
+    // collect all neccessary arguments and sent via TCP
+    LaunchParams params(process_settings,client,window_width,window_height,window_start_x,window_start_y,port,client_num);
+    int sockfd = socket(AF_INET,SOCK_STREAM,0);
+    if(sockfd < 0)
+    {
+        printf("ERROR opening socket.\n");
+        exit(0);
+    }
+    const char *ip_addr = process_settings.net_address.c_str();
+    struct hostent* server = gethostbyname(ip_addr);
+    struct sockaddr_in serv_addr;
+    bzero((char *) &serv_addr, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    bcopy((char *)server->h_addr, 
+        (char *)&serv_addr.sin_addr.s_addr,
+        server->h_length);
+    serv_addr.sin_port = htons(port);
+    if (connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0)
+    {
+        printf("ERROR connecting");
+        exit(0);
+    }
+    char* buffer = &params;
+    int n = write(sockfd,buffer,strlen(buffer));
+    // wait for finish signal
+
+    // Return those from client
+    // pi.process_path = process_settings.process_path;
+    // pi.process_id = StartProcess(process_settings.process_path, cl);
+    
+}
+#endif
 
 int LaunchProcess(ProcessSettings& process_settings, Client* client, int window_width, int window_height, int window_start_x, int window_start_y, int port, int client_num=0) {
     assert(client);
@@ -116,6 +300,28 @@ int LaunchProcesses(ProcessSettings& process_settings, std::vector<Client*> clie
 
     return last_port;
 }
+
+#ifdef __linux__
+int LaunchRemoteProcesses(ProcessSettings& process_settings, std::vector<Client*> clients, int window_width, int window_height, int window_start_x, int window_start_y) {
+    int last_port = 0;
+    // Start an sc2 process for each bot.
+    int clientIndex = 0;
+    for (auto c : clients) {
+        last_port = LaunchRemoteProcess(process_settings, 
+            c, 
+            window_width, 
+            window_height, 
+            window_start_x, 
+            window_start_y, 
+            process_settings.port_start + static_cast<int>(process_settings.process_info.size()) - 1, 
+            clientIndex++);
+    }
+
+    AttachClients(process_settings, clients);
+
+    return last_port;
+}
+#endif
 
 static void CallOnStep(Agent* a) {
     ControlInterface* control = a->Control();
@@ -736,6 +942,38 @@ void Coordinator::LaunchStarcraft() {
     imp_->starcraft_started_ = true;
     imp_->last_port_ = port_start;
 }
+
+#ifdef __linux__
+void Coordinator::RemoteLaunchStarcraft(std::string ip_addr, int port) {
+    // modify process_settings_
+    imp_->process_settings_.net_address = ip_addr;
+    imp_->process_settings_.port_start = port;
+    if (!DoesFileExist(imp_->process_settings_.process_path)) {
+        std::cerr << "Executable path can't be found, try running the StarCraft II executable first." << std::endl;
+        if (!imp_->process_settings_.process_path.empty()) {
+            std::cerr << imp_->process_settings_.process_path << " does not exist on your filesystem.";
+        }
+        std::cerr << std::endl;
+        assert(!"Could not find the executable. Supply a valid path.");
+        exit(1);
+    }
+
+    assert(!imp_->agents_.empty());
+
+    // TODO: Check the case that a pid in the process_info_ struct is no longer running.
+    // The process may have died.
+    int port_start = 0;
+    if (imp_->process_settings_.process_info.size() != imp_->agents_.size()) {
+        port_start = LaunchRemoteProcesses(imp_->process_settings_,
+            std::vector<sc2::Client*>(imp_->agents_.begin(), imp_->agents_.end()), imp_->window_width_, imp_->window_height_, imp_->window_start_x_, imp_->window_start_y_);
+    }
+
+    SetupPorts( imp_->agents_.size(), port_start);
+
+    imp_->starcraft_started_ = true;
+    imp_->last_port_ = port_start;
+}
+#endif
 
 void Coordinator::Connect(int port) {
     while (imp_->process_settings_.process_info.size() < imp_->agents_.size()) {
