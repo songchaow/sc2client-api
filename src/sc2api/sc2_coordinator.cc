@@ -239,9 +239,10 @@ int LaunchRemoteProcess(ProcessSettings& process_settings, Client* client, int w
     // wait for finish signal
     printf("sent. waiting for response.\n");
     // Return those from client
-    // pi.process_path = process_settings.process_path;
-    // pi.process_id = StartProcess(process_settings.process_path, cl);
-    
+    pi.process_path = "Remote process";
+    pi.process_id = 0;
+    client->Control()->SetProcessInfo(pi);
+    return pi.port;
 }
 #endif
 
@@ -989,7 +990,7 @@ void Coordinator::RemoteLaunchStarcraft(std::string ip_addr, int comm_port) {
     } */
 
     assert(!imp_->agents_.empty());
-
+    std::cout << "Launch from "<<ip_addr<<std::endl;
     // TODO: Check the case that a pid in the process_info_ struct is no longer running.
     // The process may have died.
     int port_start = 0;
