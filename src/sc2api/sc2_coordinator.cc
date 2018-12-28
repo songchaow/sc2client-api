@@ -228,13 +228,21 @@ int LaunchRemoteProcess(ProcessSettings& process_settings, Client* client, int w
         (char *)&serv_addr.sin_addr.s_addr,
         server->h_length);
     serv_addr.sin_port = htons(comm_port);
+    
+    std::cout << "Remote IP: "<<process_settings.net_address<<std::endl;
     if (connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0)
     {
-        printf("ERROR connecting");
+        printf("ERROR connecting\n");
         exit(0);
     }
+    std::cout << "Remote IP: "<<process_settings.net_address<<std::endl;
     size_t buff_len = launch_info.ByteSize();
     char* buffer = new char[buff_len];
+    if(launch_info.SerializeToArray(buffer,buff_len)==false)
+    {
+	printf("ERROR serializing.\n");
+	exit(0);
+    }
     int n = write(sockfd,buffer,buff_len);
     // wait for finish signal
     printf("sent. waiting for response.\n");
